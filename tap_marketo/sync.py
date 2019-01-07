@@ -104,8 +104,8 @@ def update_state_with_export_info(state, stream, bookmark=None, export_id=None, 
     return state
 
 
-def get_export_end(export_start):
-    export_end = export_start.add(days=MAX_EXPORT_DAYS)
+def get_export_end(export_start, days=1):
+    export_end = export_start.add(days=days)
     if export_end >= pendulum.utcnow():
         export_end = pendulum.utcnow()
 
