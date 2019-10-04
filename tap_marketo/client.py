@@ -37,12 +37,14 @@ def extract_domain(url):
 
 class ApiException(Exception):
     """Indicates an error occured communicating with the Marketo API."""
-    pass
+
+
+class ApiQuotaExceeded(Exception):
+    """Indicates that there's no quota left for the API"""
 
 
 class ExportFailed(Exception):
     """Indicates an error occured while attempting a bulk export."""
-    pass
 
 
 class Client:
@@ -169,7 +171,7 @@ class Client:
             data = resp.json()
             err_codes = set(err["code"] for err in data.get("errors", []))
             if API_QUOTA_EXCEEDED in err_codes:
-                raise ApiException(API_QUOTA_EXCEEDED_MESSAGE.format(data['errors']))
+                raise ApiQuotaExceeded(API_QUOTA_EXCEEDED_MESSAGE.format(data['errors']))
             elif not data["success"]:
                 err = ", ".join("{code}: {message}".format(**e) for e in data["errors"])
                 raise ApiException("Marketo API returned error(s): {}".format(err))
@@ -291,7 +293,7 @@ class Client:
             singer.log_info("Corona not supported.")
             return False
         elif API_QUOTA_EXCEEDED in err_codes:
-            raise ApiException(API_QUOTA_EXCEEDED_MESSAGE.format(data['errors']))
+            raise ApiQuotaExceeded(API_QUOTA_EXCEEDED_MESSAGE.format(data['errors']))
         else:
             singer.log_info("Corona is supported.")
             singer.log_info(data)

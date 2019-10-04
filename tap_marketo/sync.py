@@ -7,7 +7,7 @@ import singer
 from singer import metadata
 from singer import bookmarks
 from singer import utils
-from tap_marketo.client import ExportFailed
+from tap_marketo.client import ExportFailed, ApiQuotaExceeded
 
 # We can request up to 30 days worth of activities per export.
 MAX_EXPORT_DAYS = 30
@@ -87,10 +87,15 @@ def format_value(value, schema):
 
 def format_values(stream, row):
     rtn = {}
+
+    available_fields = []
+    for entry in stream['metadata']:
+        if len(entry['breadcrumb']) > 0 and (entry['metadata'].get('selected') or entry['metadata'].get('inclusion') == 'automatic'):
+            available_fields.append(entry['breadcrumb'][-1])
+
     for field, schema in stream["schema"]["properties"].items():
-        if not schema.get("selected") and not (schema.get("inclusion") == "automatic"):
-            continue
-        rtn[field] = format_value(row.get(field), schema)
+        if field in available_fields:
+            rtn[field] = format_value(row.get(field), schema)
     return rtn
 
 
@@ -104,8 +109,8 @@ def update_state_with_export_info(state, stream, bookmark=None, export_id=None, 
     return state
 
 
-def get_export_end(export_start, days=1):
-    export_end = export_start.add(days=days)
+def get_export_end(export_start, end_days=MAX_EXPORT_DAYS):
+    export_end = export_start.add(days=end_days)
     if export_end >= pendulum.utcnow():
         export_end = pendulum.utcnow()
 
@@ -123,6 +128,8 @@ def wait_for_export(client, state, stream, export_id):
     return state
 
 
+# This function has an issue with UTF-8 data most likely caused by decode_unicode=True
+# See https://github.com/singer-io/tap-marketo/pull/51/files
 def stream_rows(client, stream_type, export_id):
     with tempfile.NamedTemporaryFile(mode="w+", encoding="utf8") as csv_file:
         singer.log_info("Download starting.")
@@ -156,8 +163,11 @@ def get_or_create_export_for_leads(client, state, stream, export_start):
 
         # Create the new export and store the id and end date in state.
         # Does not start the export (must POST to the "enqueue" endpoint).
-        fields = [f for f, s in stream["schema"]["properties"].items()
-                  if s.get("selected") or (s.get("inclusion") == "automatic")]
+        fields = []
+        for entry in stream['metadata']:
+            if len(entry['breadcrumb']) > 0 and (entry['metadata'].get('selected') or entry['metadata'].get('inclusion') == 'automatic'):
+                fields.append(entry['breadcrumb'][-1])
+
         export_id = client.create_export("leads", fields, query)
         state = update_state_with_export_info(
             state, stream, export_id=export_id, export_end=export_end.isoformat())
@@ -167,7 +177,7 @@ def get_or_create_export_for_leads(client, state, stream, export_start):
     return export_id, export_end
 
 
-def get_or_create_export_for_activities(client, state, stream, export_start):
+def get_or_create_export_for_activities(client, state, stream, export_start, config):
     export_id = bookmarks.get_bookmark(state, stream["tap_stream_id"], "export_id")
     if export_id is not None and not client.export_available("activities", export_id):
         singer.log_info("Export %s no longer available.", export_id)
@@ -184,14 +194,28 @@ def get_or_create_export_for_activities(client, state, stream, export_start):
         # that is not a real field. `createdAt` proxies `activityDate`.
         # The activity type id must also be included in the query. The
         # largest date range that can be used for activities is 30 days.
-        export_end = get_export_end(export_start)
+        max_export_days = int(config.get('max_export_days',
+                                         MAX_EXPORT_DAYS))
+        export_end = get_export_end(export_start,
+                                    end_days=max_export_days)
         query = {"createdAt": {"startAt": export_start.isoformat(),
                                "endAt": export_end.isoformat()},
                  "activityTypeIds": [activity_type_id]}
 
         # Create the new export and store the id and end date in state.
         # Does not start the export (must POST to the "enqueue" endpoint).
-        export_id = client.create_export("activities", ACTIVITY_FIELDS, query)
+        try:
+            export_id = client.create_export("activities", ACTIVITY_FIELDS, query)
+        except ApiQuotaExceeded as e:
+            # The main reason we wrap the ApiQuotaExceeded exception in a
+            # new one is to be able to tell the customer what their
+            # configured max_export_days is.
+            raise ApiQuotaExceeded(
+                ("You may wish to consider changing the "
+                 "`max_export_days` config value to a lower number if "
+                 "you're unable to sync a single {} day window within "
+                 "your current API quota.").format(
+                     max_export_days)) from e
         state = update_state_with_export_info(
             state, stream, export_id=export_id, export_end=export_end.isoformat())
     else:
@@ -264,7 +288,7 @@ def sync_leads(client, state, stream):
     return state, record_count
 
 
-def sync_activities(client, state, stream):
+def sync_activities(client, state, stream, config):
     # http://developers.marketo.com/rest-api/bulk-extract/bulk-activity-extract/
     replication_key = determine_replication_key(stream['tap_stream_id'])
     singer.write_schema(stream["tap_stream_id"], stream["schema"], stream["key_properties"], bookmark_properties=[replication_key])
@@ -272,7 +296,7 @@ def sync_activities(client, state, stream):
     job_started = pendulum.utcnow()
     record_count = 0
     while export_start < job_started:
-        export_id, export_end = get_or_create_export_for_activities(client, state, stream, export_start)
+        export_id, export_end = get_or_create_export_for_activities(client, state, stream, export_start, config)
         state = wait_for_export(client, state, stream, export_id)
         for row in stream_rows(client, "activities", export_id):
             time_extracted = utils.now()
@@ -420,7 +444,7 @@ def sync_activity_types(client, state, stream):
     return state, record_count
 
 
-def sync(client, catalog, state):
+def sync(client, catalog, config, state):
     starting_stream = bookmarks.get_currently_syncing(state)
     if starting_stream:
         singer.log_info("Resuming sync from %s", starting_stream)
@@ -429,7 +453,9 @@ def sync(client, catalog, state):
 
     for stream in catalog["streams"]:
         # Skip unselected streams.
-        if not stream["schema"].get("selected"):
+        mdata = metadata.to_map(stream['metadata'])
+
+        if not metadata.get(mdata, (), 'selected'):
             singer.log_info("%s: not selected", stream["tap_stream_id"])
             continue
 
@@ -452,7 +478,7 @@ def sync(client, catalog, state):
         elif stream["tap_stream_id"] == "leads":
             state, record_count = sync_leads(client, state, stream)
         elif stream["tap_stream_id"].startswith("activities_"):
-            state, record_count = sync_activities(client, state, stream)
+            state, record_count = sync_activities(client, state, stream, config)
         elif stream["tap_stream_id"] in ["campaigns", "lists"]:
             state, record_count = sync_paginated(client, state, stream)
         elif stream["tap_stream_id"] == "programs":

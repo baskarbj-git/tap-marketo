@@ -5,49 +5,38 @@
   "schema": {
     "type": "object",
     "additionalProperties": false,
-    "inclusion": "available",
     "properties": {
       "id": {
-        "type": "integer",
-        "inclusion": "automatic"
+        "type": "integer"
       },
       "createdAt": {
         "type": "string",
-        "format": "date-time",
-        "inclusion": "automatic"
+        "format": "date-time"
       },
       "updatedAt": {
         "type": "string",
-        "format": "date-time",
-        "inclusion": "automatic"
+        "format": "date-time"
       },
       "active": {
-        "type": ["boolean", "null"],
-        "inclusion": "available"
+        "type": ["boolean", "null"]
       },
       "description": {
-        "type": ["string", "null"],
-        "inclusion": "available"
+        "type": ["string", "null"]
       },
       "name": {
-        "type": "string",
-        "inclusion": "available"
+        "type": "string"
       },
       "programId": {
-        "type": ["integer", "null"],
-        "inclusion": "available"
+        "type": ["integer", "null"]
       },
       "programName": {
-        "type": ["string", "null"],
-        "inclusion": "available"
+        "type": ["string", "null"]
       },
       "type": {
-        "type": "string",
-        "inclusion": "available"
+        "type": "string"
       },
       "workspaceName": {
-        "type": ["string", "null"],
-        "inclusion": "available"
+        "type": ["string", "null"]
       }
     }
   }

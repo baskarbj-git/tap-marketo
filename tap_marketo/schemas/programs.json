@@ -5,64 +5,50 @@
   "schema": {
     "type": "object",
     "additionalProperties": false,
-    "inclusion": "available",
     "properties": {
       "id": {
-        "type": "integer",
-        "inclusion": "automatic"
+        "type": "integer"
       },
       "createdAt": {
         "type": "string",
-        "format": "date-time",
-        "inclusion": "automatic"
+        "format": "date-time"
       },
       "updatedAt": {
         "type": "string",
-        "format": "date-time",
-        "inclusion": "automatic"
+        "format": "date-time"
       },
       "name": {
-        "type": "string",
-        "inclusion": "available"
+        "type": "string"
       },
       "description": {
-        "type": ["null", "string"],
-        "inclusion": "available"
+        "type": ["null", "string"]
       },
       "url": {
-        "type": ["null", "string"],
-        "inclusion": "available"
+        "type": ["null", "string"]
       },
       "type": {
-        "type": ["null", "string"],
-        "inclusion": "available"
+        "type": ["null", "string"]
       },
       "channel": {
-        "type": ["null", "string"],
-        "inclusion": "available"
+        "type": ["null", "string"]
       },
       "status": {
-        "type": ["null", "string"],
-        "inclusion": "available"
+        "type": ["null", "string"]
       },
       "workspace": {
-        "type": ["null", "string"],
-        "inclusion": "available"
+        "type": ["null", "string"]
       },
       "folder": {
         "type": "object",
         "properties": {
           "type": {
-            "type": ["null", "string"],
-            "inclusion": "available"
+            "type": ["null", "string"]
           },
           "value": {
-            "type": ["null", "integer"],
-            "inclusion": "available"
+            "type": ["null", "integer"]
           },
           "folderName": {
-            "type": ["null", "string"],
-            "inclusion": "available"
+            "type": ["null", "string"]
           }
         }
       }

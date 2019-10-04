@@ -5,19 +5,15 @@
   "schema": {
     "type": "object",
     "additionalProperties": false,
-    "inclusion": "automatic",
     "properties": {
       "id": {
-        "type": "integer",
-        "inclusion": "automatic"
+        "type": "integer"
       },
       "name": {
-        "type": "string",
-        "inclusion": "automatic"
+        "type": "string"
       },
       "description": {
-        "type": ["string", "null"],
-        "inclusion": "available"
+        "type": ["string", "null"]
       },
       "primaryAttribute": {
         "type": ["object", "null"],
@@ -42,8 +38,7 @@
               "type": "string"
             }
           }
-        },
-        "inclusion": "unsupported"
+        }
       }
     }
   }
