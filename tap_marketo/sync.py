@@ -146,7 +146,7 @@ def stream_rows(client, stream_type, export_id):
             yield dict(zip(headers, line))
 
 
-def get_or_create_export_for_leads(client, state, stream, export_start):
+def get_or_create_export_for_leads(client, state, stream, export_start, config):
     export_id = bookmarks.get_bookmark(state, "leads", "export_id")
     # check if export is still valid
     if export_id is not None and not client.export_available("leads", export_id):
@@ -251,7 +251,7 @@ def flatten_activity(row, stream):
     return rtn
 
 
-def sync_leads(client, state, stream):
+def sync_leads(client, state, stream, config):
     # http://developers.marketo.com/rest-api/bulk-extract/bulk-lead-extract/
     replication_key = determine_replication_key(stream["tap_stream_id"])
 
@@ -479,7 +479,7 @@ def sync(client, catalog, config, state):
         if stream["tap_stream_id"] == "activity_types":
             state, record_count = sync_activity_types(client, state, stream)
         elif stream["tap_stream_id"] == "leads":
-            state, record_count = sync_leads(client, state, stream)
+            state, record_count = sync_leads(client, state, stream, config)
         elif stream["tap_stream_id"].startswith("activities_"):
             state, record_count = sync_activities(client, state, stream, config)
         elif stream["tap_stream_id"] in ["campaigns", "lists"]:
