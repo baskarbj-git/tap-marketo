@@ -265,7 +265,7 @@ def sync_leads(client, state, stream, config):
     record_count = 0
     max_bookmark = initial_bookmark
     while export_start < job_started:
-        export_id, export_end = get_or_create_export_for_leads(client, state, stream, export_start)
+        export_id, export_end = get_or_create_export_for_leads(client, state, stream, export_start, config)
         state = wait_for_export(client, state, stream, export_id)
         for row in stream_rows(client, "leads", export_id):
             time_extracted = utils.now()
