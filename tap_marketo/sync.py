@@ -23,6 +23,7 @@ ACTIVITY_FIELDS = BASE_ACTIVITY_FIELDS + [
     "primaryAttributeValue",
     "primaryAttributeValueId",
     "attributes",
+    "campaignId"
 ]
 
 def determine_replication_key(tap_stream_id):
