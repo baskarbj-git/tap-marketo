@@ -193,7 +193,12 @@ def get_or_create_export_for_activities(client, state, stream, export_start, con
         # We need the activity type id to build the query.
         activity_metadata = metadata.to_map(stream["metadata"])
         activity_type_id = metadata.get(activity_metadata, (), 'marketo.activity-id')
-
+        import sys
+        import json
+        sys.stderr.write(f"\n\nraw stream: {json.dumps(stream['metadata'])}")
+        sys.stderr.write(f"\n\nwe got this for act: {activity_type_id} and {activity_metadata}")
+        
+        return
         # Activities must be queried by `createdAt` even though
         # that is not a real field. `createdAt` proxies `activityDate`.
         # The activity type id must also be included in the query. The
@@ -288,6 +293,8 @@ def sync_leads(client, state, stream, config):
         # Now that one of the exports is finished, update the bookmark
         state = update_state_with_export_info(state, stream, bookmark=max_bookmark.isoformat())
         export_start = export_end
+        if config.get("catchup", True) == False:
+            break
 
     return state, record_count
 
@@ -313,7 +320,8 @@ def sync_activities(client, state, stream, config):
 
         state = update_state_with_export_info(state, stream, bookmark=export_start.isoformat())
         export_start = export_end
-
+        if config.get("catchup", True) == False:
+            break
     return state, record_count
 
 
