@@ -193,12 +193,7 @@ def get_or_create_export_for_activities(client, state, stream, export_start, con
         # We need the activity type id to build the query.
         activity_metadata = metadata.to_map(stream["metadata"])
         activity_type_id = metadata.get(activity_metadata, (), 'marketo.activity-id')
-        import sys
-        import json
-        sys.stderr.write(f"\n\nraw stream: {json.dumps(stream['metadata'])}")
-        sys.stderr.write(f"\n\nwe got this for act: {activity_type_id} and {activity_metadata}")
-        
-        return
+                
         # Activities must be queried by `createdAt` even though
         # that is not a real field. `createdAt` proxies `activityDate`.
         # The activity type id must also be included in the query. The
