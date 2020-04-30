@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.2.9
+  * Fix export availability result around issue where Marketo reports an export as existing, but returns a 404 on the underlying file. [#62](https://github.com/singer-io/tap-marketo/pull/62)
+
+## 2.2.8
+  * Alters requests backoff to a more predictable pattern that covers the rate limit window [#61](https://github.com/singer-io/tap-marketo/pull/61)
+  * Increases `singer-python` dependency to `5.9.0` [#61](https://github.com/singer-io/tap-marketo/pull/61)
+  * Adds explicit `backoff` dependency at version `1.8.0` [#61](https://github.com/singer-io/tap-marketo/pull/61)
+
+## 2.2.7
+  * On requests, client will retry when hitting the 100 requests per 20 seconds rate limit error [#60](https://github.com/singer-io/tap-marketo/pull/60)
+
+## 2.2.6
+  * Check for empty list instead of empty tuple for stream metadata [#58](https://github.com/singer-io/tap-marketo/pull/58)
+
 ## 2.2.5
   * Use `singer-python` functions to do stream selection
 

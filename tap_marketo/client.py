@@ -1,6 +1,7 @@
 import re
 import time
 
+import backoff
 import pendulum
 import requests
 import singer
@@ -16,6 +17,11 @@ NO_CORONA_CODE = "1035"
 API_QUOTA_EXCEEDED = "1029"
 
 API_QUOTA_EXCEEDED_MESSAGE = "Marketo API returned error(s): {}. Data can resume replicating at midnight central time. Read more about Marketo Bulk API limits here: http://developers.marketo.com/rest-api/bulk-extract/#limits"
+
+# Marketo has a 100 requests per 20 seconds quota, this raises a 606 code if hit
+SHORT_TERM_QUOTA_EXCEEDED = "606"
+
+SHORT_TERM_QUOTA_EXCEEDED_MESSAGE = "Marketo API returned error(s): {}. This is due to a short term rate limiting mechanism. Backing off and retrying the request."
 
 # Marketo limits REST requests to 50000 per day with a rate limit of 100
 # calls per 20 seconds.
@@ -34,7 +40,6 @@ def extract_domain(url):
         raise ValueError("%s is not a valid Marketo URL" % url)
     return result.group()
 
-
 class ApiException(Exception):
     """Indicates an error occured communicating with the Marketo API."""
 
@@ -42,10 +47,32 @@ class ApiException(Exception):
 class ApiQuotaExceeded(Exception):
     """Indicates that there's no quota left for the API"""
 
+class ShortTermQuotaExceeded(Exception):
+    """
+    Indicates that more than 100 requests across all the user's apps have
+    been made in the past 20 seconds and that we need to back off.
+    """
 
 class ExportFailed(Exception):
+
     """Indicates an error occured while attempting a bulk export."""
 
+def handle_short_term_rate_limit():
+    return backoff.on_exception(backoff.constant,
+                                (ShortTermQuotaExceeded),
+                                max_tries=5,
+                                interval=4,
+                                jitter=None,
+                                logger=singer.get_logger())
+
+def raise_for_rate_limit(data):
+    err_codes = set(err["code"] for err in data.get("errors", []))
+    if API_QUOTA_EXCEEDED in err_codes:
+        raise ApiQuotaExceeded(API_QUOTA_EXCEEDED_MESSAGE.format(data['errors']))
+    elif SHORT_TERM_QUOTA_EXCEEDED in err_codes:
+        message = SHORT_TERM_QUOTA_EXCEEDED_MESSAGE.format(data['errors'])
+        singer.log_warning(message)
+        raise ShortTermQuotaExceeded(message)
 
 class Client:
     # pylint: disable=unused-argument
@@ -149,12 +176,15 @@ class Client:
     def update_calls_today(self):
         # http://developers.marketo.com/rest-api/endpoint-reference/lead-database-endpoint-reference/#!/Usage/getDailyUsageUsingGET
         data = self._request("GET", "rest/v1/stats/usage.json").json()
+
+        raise_for_rate_limit(data)
         if "result" not in data:
             raise ApiException(data)
 
         self.calls_today = int(data["result"][0]["total"])
         singer.log_info("Used %s of %s requests", self.calls_today, self.max_daily_calls)
 
+    @handle_short_term_rate_limit()
     def request(self, method, url, endpoint_name=None, **kwargs):
         if self.calls_today % 250 == 0:
             self.update_calls_today()
@@ -169,16 +199,16 @@ class Client:
                 return {}
 
             data = resp.json()
-            err_codes = set(err["code"] for err in data.get("errors", []))
-            if API_QUOTA_EXCEEDED in err_codes:
-                raise ApiQuotaExceeded(API_QUOTA_EXCEEDED_MESSAGE.format(data['errors']))
-            elif not data["success"]:
+            raise_for_rate_limit(data)
+            if not data["success"]:
                 err = ", ".join("{code}: {message}".format(**e) for e in data["errors"])
                 raise ApiException("Marketo API returned error(s): {}".format(err))
 
+
             return data
         else:
-            if resp.status_code != 200:
+            # NB: 206 Partial Content returned when checking for file existence
+            if resp.status_code not in [200, 206]:
                 raise ApiException("Marketo API returned error: {0.status_code}: {0.content}".format(resp))
 
             return resp
@@ -209,18 +239,38 @@ class Client:
         endpoint_name = "{}_cancel".format(stream_type)
         self.request("POST", endpoint, endpoint_name=endpoint_name)
 
-    def get_existing_export_ids(self, stream_type):
+    def get_existing_exports(self, stream_type):
         endpoint = "bulk/v1/{}/export.json".format(stream_type)
         result = self.request(
             "GET", endpoint,
             params={"status": ["Created", "Queued", "Processing", "Completed"]})
         if "result" in result:
-            return {r["exportId"] for r in result["result"]}
+            return {r["exportId"]: r for r in result["result"]}
         else:
-            return set()
+            return dict()
+
+    def export_file_exists(self, stream_type, export_id, existing_exports):
+        if existing_exports.get(export_id, {}).get("status") != "Completed":
+            # If the export is not finished, return existence and continue polling
+            return True
+
+        # Request 0 bytes to see if the file can be found
+        endpoint = self.get_bulk_endpoint(stream_type, "file", export_id)
+        endpoint_name = "{}_stream".format(stream_type)
+        try:
+            # Range described here: https://developers.marketo.com/rest-api/bulk-extract/#crayon-5e600bb5f1a53663868461
+            self.request("GET", endpoint, endpoint_name=endpoint_name, stream=True, headers={"Range": "bytes=0-0"})
+            return True
+        except requests.exceptions.HTTPError as ex:
+            if ex.response.status_code == 404:
+                return False
+            raise
 
     def export_available(self, stream_type, export_id):
-        return export_id in self.get_existing_export_ids(stream_type)
+        # NB: Marketo may return that an export is Completed, but the file doesn't exist, so we need to check both.
+        existing_exports = self.get_existing_exports(stream_type)
+        export_id_exists = export_id in existing_exports
+        return export_id_exists and self.export_file_exists(stream_type, export_id, existing_exports)
 
     def get_export_status(self, stream_type, export_id):
         endpoint = self.get_bulk_endpoint(stream_type, "status", export_id)
@@ -261,6 +311,7 @@ class Client:
 
         raise ExportFailed("Export timed out after {} minutes".format(self.job_timeout / 60))
 
+    @handle_short_term_rate_limit()
     def test_corona(self):
         # http://developers.marketo.com/rest-api/bulk-extract/#limits
         # Corona allows us to do bulk queries for Leads using updatedAt
@@ -284,6 +335,8 @@ class Client:
         endpoint = self.get_bulk_endpoint("leads", "create")
         data = self._request("POST", endpoint, endpoint_name="leads_create", json=payload).json()
 
+        raise_for_rate_limit(data)
+
         # If the error code indicating no Corona support is present,
         # Corona is not supported. If we don't get that error code,
         # Corona is supported and we need to clean up by cancelling the
@@ -292,8 +345,6 @@ class Client:
         if NO_CORONA_CODE in err_codes:
             singer.log_info("Corona not supported.")
             return False
-        elif API_QUOTA_EXCEEDED in err_codes:
-            raise ApiQuotaExceeded(API_QUOTA_EXCEEDED_MESSAGE.format(data['errors']))
         else:
             singer.log_info("Corona is supported.")
             singer.log_info(data)
